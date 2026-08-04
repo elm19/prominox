@@ -1,0 +1,25 @@
+# Python virtual environment
+venv/
+.venv/
+env/
+ENV/
+
+# Python bytecode / compiled files
+__pycache__/
+*.py[cod]
+*$py.class
+
+
+
+# Testing & Coverage
+.pytest_cache/
+.coverage
+htmlcov/
+
+# IDE / Editor configuration
+.vscode/
+.idea/
+
+# Database files (if using SQLite locally for testing)
+*.db
+*.sqlite3
