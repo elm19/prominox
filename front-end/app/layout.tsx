@@ -1,6 +1,13 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import Script from "next/script";
+import { Geist, Geist_Mono, Noto_Serif, Public_Sans } from "next/font/google";
 import "./globals.css";
+import { cn } from "@/lib/utils";
+import { AppProviders } from "@/components/providers/app-providers";
+
+const publicSansHeading = Public_Sans({subsets:['latin'],variable:'--font-heading'});
+
+const notoSerif = Noto_Serif({subsets:['latin'],variable:'--font-serif'});
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -14,16 +21,30 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   title: "Prominox",
-  description: "",
+  description: "Prominox digital factory platform",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html
       lang="en"
-      className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
+      className={cn("h-full", "antialiased", geistSans.variable, geistMono.variable, "font-serif", notoSerif.variable, publicSansHeading.variable)}
     >
-      <body className="min-h-full flex flex-col">{children}</body>
+      <body className="min-h-full flex flex-col">
+        <Script id="theme-init" strategy="beforeInteractive">
+          {`
+            (() => {
+              const saved = window.localStorage.getItem('theme');
+              const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+              if (saved === 'dark' || (!saved && prefersDark)) {
+                document.documentElement.classList.add('dark');
+              }
+            })();
+          `}
+        </Script>
+        <AppProviders>{children}</AppProviders>
+      </body>
     </html>
   );
 }

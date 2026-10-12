@@ -3,3 +3,13 @@ uvicorn[standard]
 sqlalchemy
 pydantic
 pydantic-settings
+psycopg[binary]
+alembic
+python-multipart
+
+argon2-cffi
+pyjwt
+reportlab
+email-validator
+numpy
+simpy
