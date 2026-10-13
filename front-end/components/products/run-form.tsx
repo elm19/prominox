@@ -5,7 +5,9 @@ import * as React from "react"
 import { createRun, type ProcessOption, type RunInput } from "@/lib/api"
 import { describeError } from "@/lib/errors"
 import { computeLevels } from "@/components/products/routing-flow"
+import { ArrowLeft, ArrowRight, Check } from "@/lib/icons"
 import { Button } from "@/components/ui/button"
+import { Progress } from "@/components/ui/progress"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Textarea } from "@/components/ui/textarea"
@@ -30,11 +32,6 @@ type StepRow = {
 }
 
 const toIso = (local: string) => new Date(local).toISOString()
-const toLocal = (date: Date) => {
-  const shifted = new Date(date.getTime() - date.getTimezoneOffset() * 60000)
-  return shifted.toISOString().slice(0, 16)
-}
-
 export function RunForm({ product, processes, onDone }: { product: Product; processes: ProcessOption[]; onDone: () => void }) {
   const { toast } = useToast()
   const [mode, setMode] = React.useState<"manual" | "json">("manual")
@@ -47,6 +44,9 @@ export function RunForm({ product, processes, onDone }: { product: Product; proc
   const [notes, setNotes] = React.useState("")
   const [json, setJson] = React.useState("")
   const [busy, setBusy] = React.useState(false)
+  // 0 = batch details, 1..n = one routing step each, n + 1 = review
+  const [page, setPage] = React.useState(0)
+  const [reached, setReached] = React.useState(0)
 
   const ordered = React.useMemo(() => {
     const levels = computeLevels(product.steps)
@@ -63,25 +63,38 @@ export function RunForm({ product, processes, onDone }: { product: Product; proc
   const patchRow = (index: number, patch: Partial<StepRow>) =>
     setRows((current) => current.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)))
 
-  const spreadTimes = () => {
-    if (!start || !end) return toast({ title: "Set the run's start and end first", tone: "error" })
-    const included = rows.filter((row) => row.include)
-    const span = (new Date(end).getTime() - new Date(start).getTime()) / Math.max(included.length, 1)
-    let index = 0
-    setRows((current) =>
-      current.map((row) => {
-        if (!row.include) return row
-        const from = new Date(new Date(start).getTime() + span * index)
-        const to = new Date(new Date(start).getTime() + span * (index + 1))
-        index += 1
-        return { ...row, start: toLocal(from), end: toLocal(to) }
-      })
-    )
+  const validatePage = (index: number) => {
+    if (index === 0) {
+      if (!batch.trim()) return "Batch number is required."
+      if (!start || !end) return "The run's start and end are required."
+      if (new Date(end) < new Date(start)) return "The run cannot finish before it starts."
+      if (!produced.trim()) return "Enter the quantity produced."
+      return null
+    }
+    const row = rows[index - 1]
+    if (!row || !row.include) return null
+    if (!row.start || !row.end) return `Fill in the start and end time of "${row.name}" before clicking Next.`
+    if (new Date(row.end) < new Date(row.start)) return `"${row.name}" cannot end before it starts.`
+    if (new Date(row.start) < new Date(start) || new Date(row.end) > new Date(end)) return `"${row.name}" must fall inside the run (${start.replace("T", " ")} → ${end.replace("T", " ")}).`
+    return null
   }
 
-  const fillQuantities = () => {
-    if (!produced.trim()) return toast({ title: "Enter the quantity produced first", tone: "error" })
-    setRows((current) => current.map((row) => (row.include ? { ...row, quantityIn: produced, quantityOut: produced } : row)))
+  const goNext = () => {
+    const problem = validatePage(page)
+    if (problem) return toast({ title: "Not yet", description: problem, tone: "error" })
+    const next = page + 1
+    // Prefill the next step with what is most likely: it starts when the previous one ended
+    const upcoming = rows[next - 1]
+    if (upcoming && !upcoming.start) {
+      const previous = rows.slice(0, next - 1).reverse().find((row) => row.include && row.end)
+      patchRow(next - 1, {
+        start: previous?.end ?? start,
+        quantityIn: upcoming.quantityIn || (previous?.quantityOut ?? produced),
+        quantityOut: upcoming.quantityOut || (previous?.quantityOut ?? produced),
+      })
+    }
+    setPage(next)
+    setReached((current) => Math.max(current, next))
   }
 
   const submitManual = async () => {
@@ -90,8 +103,13 @@ export function RunForm({ product, processes, onDone }: { product: Product; proc
       if (value.trim() === "" || !Number.isFinite(parsed) || parsed < 0) throw new Error(`${label} must be a number, 0 or more.`)
       return parsed
     }
-    if (!batch.trim()) throw new Error("Batch number is required.")
-    if (!start || !end) throw new Error("The run's start and end are required.")
+    for (let index = 0; index <= rows.length; index += 1) {
+      const problem = validatePage(index)
+      if (problem) {
+        setPage(index)
+        throw new Error(problem)
+      }
+    }
     const included = rows.filter((row) => row.include)
     const payload: RunInput = {
       batch_number: batch.trim(),
@@ -139,6 +157,7 @@ export function RunForm({ product, processes, onDone }: { product: Product; proc
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault()
+    if (mode === "manual" && page <= rows.length) return goNext()
     setBusy(true)
     try {
       if (mode === "json") await submitJson()
@@ -180,7 +199,7 @@ export function RunForm({ product, processes, onDone }: { product: Product; proc
     <form onSubmit={submit} className="space-y-5 rounded-xl border border-border/70 bg-background/70 p-4">
       <div className="flex flex-wrap gap-2">
         <Button type="button" size="sm" variant={mode === "manual" ? "default" : "outline"} onClick={() => setMode("manual")}>
-          Single run
+          Step-by-step entry
         </Button>
         <Button type="button" size="sm" variant={mode === "json" ? "default" : "outline"} onClick={() => setMode("json")}>
           JSON import
@@ -189,78 +208,150 @@ export function RunForm({ product, processes, onDone }: { product: Product; proc
 
       {mode === "manual" ? (
         <>
-          <div className="grid gap-4 md:grid-cols-3">
-            <div className="space-y-2">
-              <Label htmlFor="run-batch">Batch / lot number</Label>
-              <Input id="run-batch" value={batch} onChange={(event) => setBatch(event.target.value)} placeholder="B-2026-014" />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="run-order">Customer order (optional)</Label>
-              <Input id="run-order" value={order} onChange={(event) => setOrder(event.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="run-notes">Notes (optional)</Label>
-              <Input id="run-notes" value={notes} onChange={(event) => setNotes(event.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="run-start">Started</Label>
-              <Input id="run-start" type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="run-end">Finished</Label>
-              <Input id="run-end" type="datetime-local" value={end} onChange={(event) => setEnd(event.target.value)} />
-            </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div className="space-y-2">
-                <Label htmlFor="run-produced">Produced ({product.unit})</Label>
-                <Input id="run-produced" type="number" min="0" step="any" value={produced} onChange={(event) => setProduced(event.target.value)} />
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="run-scrap">Scrap</Label>
-                <Input id="run-scrap" type="number" min="0" step="any" value={scrap} onChange={(event) => setScrap(event.target.value)} />
-              </div>
+          <div className="space-y-3">
+            <Progress value={(page / (rows.length + 1)) * 100} />
+            <div className="flex flex-wrap gap-1.5">
+              {["Batch", ...rows.map((row) => row.name), "Review"].map((label, index) => (
+                <button
+                  key={index}
+                  type="button"
+                  disabled={index > reached}
+                  onClick={() => setPage(index)}
+                  className={`flex items-center gap-1.5 border px-2.5 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-40 ${
+                    index === page ? "border-primary bg-primary text-primary-foreground" : "border-border/70 hover:border-primary/50"
+                  }`}
+                >
+                  {index < page && index > 0 && rows[index - 1]?.include ? <Check className="size-3" /> : null}
+                  {index > 0 && index <= rows.length ? `${index}. ` : ""}
+                  {label}
+                </button>
+              ))}
             </div>
           </div>
 
-          <div className="space-y-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div>
-                <p className="text-sm font-medium">How each step was executed</p>
-                <p className="text-xs text-muted-foreground">Uncheck steps that were skipped. Every step must fall inside the run&apos;s dates.</p>
+          <div className="border-l-4 border-primary bg-primary/10 p-3 text-sm">
+            {page === 0 ? (
+              <>
+                <strong>Step 1 of {rows.length + 2}:</strong> enter the batch details and the overall start and finish of the run, then click <strong>Next</strong>. The product will then go through all {rows.length} routing step(s), one at a time.
+              </>
+            ) : page <= rows.length ? (
+              <>
+                <strong>
+                  Step {page + 1} of {rows.length + 2}:
+                </strong>{" "}
+                fill in the <strong>start and end time</strong> of &ldquo;{rows[page - 1].name}&rdquo;, then click <strong>Next</strong> to go to {page < rows.length ? `“${rows[page].name}”` : "the review"}.
+              </>
+            ) : (
+              <>
+                <strong>Last step:</strong> check every step below. Click a step name to go back and fix it, then save the run.
+              </>
+            )}
+          </div>
+
+          {page === 0 ? (
+            <div className="grid gap-4 md:grid-cols-3">
+              <div className="space-y-2">
+                <Label htmlFor="run-batch">Batch / lot number</Label>
+                <Input id="run-batch" value={batch} onChange={(event) => setBatch(event.target.value)} placeholder="B-2026-014" />
               </div>
-              <div className="flex gap-2">
-                <Button type="button" size="xs" variant="outline" onClick={spreadTimes}>
-                  Spread times over the run
-                </Button>
-                <Button type="button" size="xs" variant="outline" onClick={fillQuantities}>
-                  Fill quantities from produced
-                </Button>
+              <div className="space-y-2">
+                <Label htmlFor="run-order">Customer order (optional)</Label>
+                <Input id="run-order" value={order} onChange={(event) => setOrder(event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="run-notes">Notes (optional)</Label>
+                <Input id="run-notes" value={notes} onChange={(event) => setNotes(event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="run-start">Started</Label>
+                <Input id="run-start" type="datetime-local" value={start} onChange={(event) => setStart(event.target.value)} />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="run-end">Finished</Label>
+                <Input id="run-end" type="datetime-local" value={end} onChange={(event) => setEnd(event.target.value)} />
+              </div>
+              <div className="grid grid-cols-2 gap-3">
+                <div className="space-y-2">
+                  <Label htmlFor="run-produced">Produced ({product.unit})</Label>
+                  <Input id="run-produced" type="number" min="0" step="any" value={produced} onChange={(event) => setProduced(event.target.value)} />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="run-scrap">Scrap</Label>
+                  <Input id="run-scrap" type="number" min="0" step="any" value={scrap} onChange={(event) => setScrap(event.target.value)} />
+                </div>
               </div>
             </div>
-            {rows.length === 0 ? <p className="text-sm text-muted-foreground">This product has no routing steps yet. Add them above to record step executions.</p> : null}
-            {rows.map((row, index) => (
-              <div key={row.stepId} className={`grid gap-3 border border-border/70 p-3 md:grid-cols-6 ${row.include ? "" : "opacity-50"}`}>
-                <label className="flex items-center gap-2 text-sm font-medium md:col-span-3">
-                  <input type="checkbox" checked={row.include} onChange={(event) => patchRow(index, { include: event.target.checked })} className="size-4" />
-                  {index + 1}. {row.name}
-                </label>
-                <select value={row.processId} onChange={(event) => patchRow(index, { processId: Number(event.target.value) })} className={`${selectClass} md:col-span-2`} aria-label="Process used" disabled={!row.include}>
-                  {processes.map((process) => (
-                    <option key={process.id} value={process.id}>
-                      {process.name}
-                    </option>
-                  ))}
-                </select>
-                <Input type="number" min="1" placeholder="Instance #" value={row.instance} onChange={(event) => patchRow(index, { instance: event.target.value })} aria-label="Instance number" disabled={!row.include} />
-                <Input type="datetime-local" value={row.start} onChange={(event) => patchRow(index, { start: event.target.value })} aria-label="Step start" disabled={!row.include} className="md:col-span-2" />
-                <Input type="datetime-local" value={row.end} onChange={(event) => patchRow(index, { end: event.target.value })} aria-label="Step end" disabled={!row.include} className="md:col-span-2" />
-                <Input type="number" min="0" step="any" placeholder="In" value={row.quantityIn} onChange={(event) => patchRow(index, { quantityIn: event.target.value })} aria-label="Quantity in" disabled={!row.include} />
-                <Input type="number" min="0" step="any" placeholder="Out" value={row.quantityOut} onChange={(event) => patchRow(index, { quantityOut: event.target.value })} aria-label="Quantity out" disabled={!row.include} />
-                <Input type="number" min="0" step="any" placeholder="Scrap" value={row.scrap} onChange={(event) => patchRow(index, { scrap: event.target.value })} aria-label="Scrap" disabled={!row.include} />
-                <Input placeholder="Operator" value={row.operator} onChange={(event) => patchRow(index, { operator: event.target.value })} aria-label="Operator" disabled={!row.include} className="md:col-span-3" />
-              </div>
-            ))}
-          </div>
+          ) : page <= rows.length ? (
+            (() => {
+              const index = page - 1
+              const row = rows[index]
+              return (
+                <div className="space-y-4">
+                  {rows.length === 0 ? null : (
+                    <label className="flex items-center gap-2 text-sm font-medium">
+                      <input type="checkbox" checked={!row.include} onChange={(event) => patchRow(index, { include: !event.target.checked })} className="size-4" />
+                      This step was skipped for this batch
+                    </label>
+                  )}
+                  <div className={`grid gap-4 md:grid-cols-6 ${row.include ? "" : "pointer-events-none opacity-40"}`}>
+                    <div className="space-y-2 md:col-span-3">
+                      <Label>Process used</Label>
+                      <select value={row.processId} onChange={(event) => patchRow(index, { processId: Number(event.target.value) })} className={selectClass} aria-label="Process used">
+                        {processes.map((process) => (
+                          <option key={process.id} value={process.id}>
+                            {process.name}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+                    <div className="space-y-2">
+                      <Label>Instance #</Label>
+                      <Input type="number" min="1" value={row.instance} onChange={(event) => patchRow(index, { instance: event.target.value })} aria-label="Instance number" />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Operator</Label>
+                      <Input value={row.operator} onChange={(event) => patchRow(index, { operator: event.target.value })} aria-label="Operator" />
+                    </div>
+                    <div className="space-y-2 md:col-span-3">
+                      <Label>Step start</Label>
+                      <Input type="datetime-local" value={row.start} onChange={(event) => patchRow(index, { start: event.target.value })} aria-label="Step start" />
+                    </div>
+                    <div className="space-y-2 md:col-span-3">
+                      <Label>Step end</Label>
+                      <Input type="datetime-local" value={row.end} onChange={(event) => patchRow(index, { end: event.target.value })} aria-label="Step end" />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Quantity in</Label>
+                      <Input type="number" min="0" step="any" value={row.quantityIn} onChange={(event) => patchRow(index, { quantityIn: event.target.value })} aria-label="Quantity in" />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Quantity out</Label>
+                      <Input type="number" min="0" step="any" value={row.quantityOut} onChange={(event) => patchRow(index, { quantityOut: event.target.value })} aria-label="Quantity out" />
+                    </div>
+                    <div className="space-y-2 md:col-span-2">
+                      <Label>Scrap</Label>
+                      <Input type="number" min="0" step="any" value={row.scrap} onChange={(event) => patchRow(index, { scrap: event.target.value })} aria-label="Scrap" />
+                    </div>
+                  </div>
+                </div>
+              )
+            })()
+          ) : (
+            <div className="space-y-2">
+              <p className="text-sm">
+                <strong>{batch}</strong> · {start.replace("T", " ")} → {end.replace("T", " ")} · {produced} {product.unit} produced, {scrap} scrap
+              </p>
+              {rows.length === 0 ? <p className="text-sm text-muted-foreground">This product has no routing steps yet. Add them in the Routing tab to record step executions.</p> : null}
+              {rows.map((row, index) => (
+                <button key={row.stepId} type="button" onClick={() => setPage(index + 1)} className={`flex w-full flex-wrap items-center justify-between gap-2 border border-border/70 p-3 text-left text-sm hover:border-primary/50 ${row.include ? "" : "opacity-50"}`}>
+                  <span className="font-medium">
+                    {index + 1}. {row.name}
+                  </span>
+                  <span className="text-muted-foreground">{row.include ? `${row.start.replace("T", " ")} → ${row.end.replace("T", " ")} · ${row.quantityIn || 0} in / ${row.quantityOut || 0} out` : "skipped"}</span>
+                </button>
+              ))}
+            </div>
+          )}
         </>
       ) : (
         <div className="space-y-3">
@@ -276,9 +367,28 @@ export function RunForm({ product, processes, onDone }: { product: Product; proc
         </div>
       )}
 
-      <Button type="submit" disabled={busy}>
-        {busy ? "Saving..." : mode === "json" ? "Import runs" : "Record production run"}
-      </Button>
+      <div className="flex flex-wrap gap-2">
+        {mode === "manual" && page > 0 ? (
+          <Button type="button" variant="outline" onClick={() => setPage(page - 1)}>
+            <ArrowLeft className="size-4" />
+            Back
+          </Button>
+        ) : null}
+        <Button type="submit" disabled={busy}>
+          {busy ? (
+            "Saving..."
+          ) : mode === "json" ? (
+            "Import runs"
+          ) : page <= rows.length ? (
+            <>
+              Next
+              <ArrowRight className="size-4" />
+            </>
+          ) : (
+            "Record production run"
+          )}
+        </Button>
+      </div>
     </form>
   )
 }

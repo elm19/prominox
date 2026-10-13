@@ -12,6 +12,7 @@ import { StepManager } from "@/components/products/step-manager"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
+import { Tabs } from "@/components/ui/tabs"
 import { getProcessOptions, getProduct, getProductRuns, productExportUrl } from "@/lib/api"
 import { formatBytes, formatDateTime, formatHours, formatQuantity } from "@/lib/format"
 
@@ -63,6 +64,13 @@ export default async function ProductDetailPage(props: PageProps<"/products/[pro
         }
       />
 
+      <Tabs
+        items={[
+          {
+            id: "overview",
+            label: "Overview",
+            content: (
+              <div className="space-y-8">
       <section className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
         <Card className="overflow-hidden bg-card/80">
           <div className="h-1.5" style={{ backgroundColor: product.color }} />
@@ -139,6 +147,32 @@ export default async function ProductDetailPage(props: PageProps<"/products/[pro
         <KPIStatCard label="Avg lead time" value={stats.avgLeadTimeHours !== null ? formatHours(stats.avgLeadTimeHours) : "-"} helper="From start to finish of a run" />
       </section>
 
+              </div>
+            ),
+          },
+          {
+            id: "routing",
+            label: "Routing",
+            badge: product.steps.length,
+            content: (
+              <div className="space-y-8">
+      <section className="space-y-4">
+        <div>
+          <h2 className="text-xl font-semibold">Routing</h2>
+          <p className="text-sm text-muted-foreground">The path through the factory processes. It is drawn in this product&apos;s colour on the factory map.</p>
+        </div>
+        <StepManager product={product} processes={processes} />
+      </section>
+
+              </div>
+            ),
+          },
+          {
+            id: "files",
+            label: "Images & documents",
+            badge: product.files.length,
+            content: (
+              <div className="space-y-8">
       <section className="space-y-4">
         <div>
           <h2 className="text-xl font-semibold">Images</h2>
@@ -169,15 +203,19 @@ export default async function ProductDetailPage(props: PageProps<"/products/[pro
         )}
       </section>
 
-      <section className="space-y-4">
-        <div>
-          <h2 className="text-xl font-semibold">Routing</h2>
-          <p className="text-sm text-muted-foreground">The path through the factory processes. It is drawn in this product&apos;s colour on the factory map.</p>
-        </div>
-        <StepManager product={product} processes={processes} />
-      </section>
-
-      <RunsSection product={product} runs={runs} processes={processes} />
+              </div>
+            ),
+          },
+          {
+            id: "production",
+            label: "Production",
+            badge: runs.length,
+            content: (
+                    <RunsSection product={product} runs={runs} processes={processes} />
+            ),
+          },
+        ]}
+      />
     </div>
   )
 }

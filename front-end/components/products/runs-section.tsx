@@ -7,8 +7,9 @@ import { useRouter } from "next/navigation"
 import { deleteRun, productExportUrl, type ProcessOption } from "@/lib/api"
 import { describeError } from "@/lib/errors"
 import { formatDateTime, formatHours, formatQuantity } from "@/lib/format"
-import { ArrowRight, Download, Plus } from "@/lib/icons"
+import { ArrowRight, Broadcast, Download, Plus } from "@/lib/icons"
 import { EmptyState } from "@/components/dashboard/empty-state"
+import { LiveRecorder } from "@/components/products/live-recorder"
 import { RunForm } from "@/components/products/run-form"
 import { Button } from "@/components/ui/button"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
@@ -19,6 +20,7 @@ export function RunsSection({ product, runs, processes }: { product: Product; ru
   const router = useRouter()
   const { toast } = useToast()
   const [showForm, setShowForm] = React.useState(false)
+  const [live, setLive] = React.useState(false)
   const [busy, setBusy] = React.useState(false)
 
   const remove = async (run: ProductionRun) => {
@@ -55,13 +57,18 @@ export function RunsSection({ product, runs, processes }: { product: Product; ru
               Step executions CSV
             </a>
           </Button>
+          <Button onClick={() => setLive((current) => !current)} variant={live ? "default" : "outline"} size="sm" aria-pressed={live}>
+            <Broadcast className="size-4" />
+            Record live: {live ? "on" : "off"}
+          </Button>
           <Button onClick={() => setShowForm((current) => !current)} variant={showForm ? "outline" : "default"} size="sm">
             <Plus className="size-4" />
-            {showForm ? "Cancel" : "Record a run"}
+            {showForm ? "Cancel" : "Add a past batch"}
           </Button>
         </div>
       </CardHeader>
       <CardContent className="space-y-4">
+        {live ? <LiveRecorder product={product} onDone={() => router.refresh()} /> : null}
         {showForm ? (
           <RunForm
             product={product}
