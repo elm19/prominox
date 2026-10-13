@@ -5,6 +5,8 @@ import { ChangePasswordForm } from "@/components/account/change-password-form"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
 import { getMe } from "@/lib/api"
 
+export const dynamic = "force-dynamic"
+
 export const metadata = {
   title: "Choose a new password",
 }

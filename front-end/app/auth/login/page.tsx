@@ -4,6 +4,8 @@ import { getMeOrNull } from "@/lib/api"
 import { AuthShell } from "@/components/auth/auth-shell"
 import { LoginForm } from "@/components/auth/login-form"
 
+export const dynamic = "force-dynamic"
+
 export const metadata = {
   title: "Sign in",
 }
